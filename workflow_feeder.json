@@ -1,0 +1,281 @@
+{
+  "name": "Data feeder",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 2
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "c907424b-1d5c-4aa1-a83c-1f03e73e9b06",
+      "name": "Weekly schedule"
+    },
+    {
+      "parameters": {
+        "operation": "clear",
+        "documentId": {
+          "__rl": true,
+          "value": "13r5epfkXrxZPTnRbNjNXkobeP__lvAWOnUoWC7uPKdo",
+          "mode": "list",
+          "cachedResultName": "sales_data",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/13r5epfkXrxZPTnRbNjNXkobeP__lvAWOnUoWC7uPKdo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1456440859,
+          "mode": "list",
+          "cachedResultName": "sales_data_en",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/13r5epfkXrxZPTnRbNjNXkobeP__lvAWOnUoWC7uPKdo/edit#gid=1456440859"
+        },
+        "keepFirstRow": true
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        208,
+        0
+      ],
+      "id": "e7ae9b25-6675-4c36-bc22-b6d6c801c6b8",
+      "name": "Clear data store",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "9xbUNqXYHVtTyrKt",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  workflow_feeder.json (\"Data Feeder\") - n8n \"Code\" node -> generate synthetic sales\n//  Mode: \"Run Once for All Items\"  |  Language: JavaScript\n//\n//  Simulates an ERP / warehouse export. On each run it generates a full\n//  ~120-day daily sales dataset ending TODAY, so the Monitor always has\n//  fresh data. In production this whole node is replaced by a real\n//  connector (MS SQL / ERP API / file drop).\n//\n//  Output: one item per row (date x SKU) -> feed into Google Sheets Append.\n// =====================================================================\n\n// --- CONFIG ---\nconst DAYS_HISTORY = 120;\n\n// Catalog: [SKU, name, category, base_price, unit_cost, base_demand]\nconst PRODUCTS = [\n  [\"TSH-001\", \"Basic cotton tee\",     \"T-shirts\",     59.0,  19.0, 45],\n  [\"TSH-002\", \"Premium oversize tee\", \"T-shirts\",     89.0,  31.0, 30],\n  [\"SHI-101\", \"Linen slim shirt\",     \"Shirts\",      159.0,  62.0, 18],\n  [\"SHI-102\", \"Flannel check shirt\",  \"Shirts\",      139.0,  54.0, 15],\n  [\"TRO-201\", \"Chino trousers\",       \"Trousers\",    179.0,  70.0, 22],\n  [\"TRO-202\", \"Regular jeans\",        \"Trousers\",    199.0,  82.0, 25],\n  [\"TRO-203\", \"Jogger sweatpants\",    \"Trousers\",    119.0,  40.0, 28],\n  [\"HOO-301\", \"Hooded sweatshirt\",    \"Hoodies\",     189.0,  72.0, 20],\n  [\"HOO-302\", \"Crewneck sweatshirt\",  \"Hoodies\",     159.0,  60.0, 16],\n  [\"JKT-401\", \"Transitional parka\",   \"Jackets\",     399.0, 175.0,  8],\n  [\"JKT-402\", \"Denim jacket\",         \"Jackets\",     259.0, 105.0, 10],\n  [\"ACC-501\", \"Beanie hat\",           \"Accessories\",  49.0,  14.0, 35],\n];\n\n// Injected anomalies: [SKU, startOffset days back, duration days, type, strength]\nconst ANOMALIES = [\n  [\"TRO-202\", 6,  4,  \"price_drop\",    0.75],\n  [\"TSH-001\", 3,  2,  \"demand_spike\",  3.2],\n  [\"JKT-401\", 9,  5,  \"stockout\",      0.0],\n  [\"SHI-101\", 10, 10, \"cost_increase\", 1.35],\n];\n\n// Weekday demand multiplier (JS getDay: 0=Sun ... 6=Sat) - weekends stronger\nconst WEEKDAY = { 0: 1.25, 1: 1.15, 2: 0.95, 3: 0.90, 4: 0.95, 5: 1.10, 6: 1.30 };\n\n// --- helpers ---\nconst iso = (d) => {\n  const y = d.getFullYear();\n  const m = String(d.getMonth() + 1).padStart(2, \"0\");\n  const day = String(d.getDate()).padStart(2, \"0\");\n  return `${y}-${m}-${day}`;\n};\nconst r2 = (x) => Math.round(x * 100) / 100;\n\n// End date = today (local midnight); start = 119 days earlier\nconst end = new Date();\nend.setHours(0, 0, 0, 0);\nconst start = new Date(end);\nstart.setDate(start.getDate() - (DAYS_HISTORY - 1));\n\n// Precompute anomaly date windows as ISO string sets per SKU\nconst anomalyByDay = ANOMALIES.map(([sku, off, dur, type, strength]) => {\n  const s = new Date(end); s.setDate(s.getDate() - off);\n  const f = new Date(s);   f.setDate(f.getDate() + dur - 1);\n  const days = new Set();\n  for (let d = new Date(s); d <= f; d.setDate(d.getDate() + 1)) days.add(iso(d));\n  return { sku, type, strength, days };\n});\n\nconst rows = [];\n\nfor (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {\n  const dayIso = iso(d);\n  const trend = 1.0 + 0.0015 * Math.round((d - start) / 86400000); // slight growth\n  const season = WEEKDAY[d.getDay()];\n\n  for (const [sku, name, category, basePrice, baseCost, baseDemand] of PRODUCTS) {\n    let price = basePrice;\n    let cost = baseCost;\n    let demand = baseDemand * trend * season;\n\n    // apply any active anomalies for this SKU/day\n    for (const a of anomalyByDay) {\n      if (a.sku !== sku || !a.days.has(dayIso)) continue;\n      if (a.type === \"price_drop\")    { price = r2(basePrice * a.strength); demand *= 1.6; }\n      else if (a.type === \"demand_spike\") { demand *= a.strength; }\n      else if (a.type === \"stockout\")     { demand = 0.0; }\n      else if (a.type === \"cost_increase\"){ cost = r2(baseCost * a.strength); }\n    }\n\n    // random noise +/-20%, rounded to whole units\n    const units = Math.max(0, Math.round(demand * (0.8 + Math.random() * 0.4)));\n\n    const revenue = r2(units * price);\n    const cogs = r2(units * cost);\n    const grossMargin = r2(revenue - cogs);\n    const grossMarginPct = revenue > 0 ? r2((grossMargin / revenue) * 100) : 0;\n\n    rows.push({\n      date: dayIso,\n      sku,\n      product: name,\n      category,\n      units_sold: units,\n      unit_price: price,\n      unit_cost: cost,\n      revenue,\n      cogs,\n      gross_margin: grossMargin,\n      gross_margin_pct: grossMarginPct,\n    });\n  }\n}\n\n// Return one n8n item per row (for the Google Sheets Append node)\nreturn rows.map((r) => ({ json: r }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "1d3d4adb-4d46-4a66-b2ed-06a2bd14b1c4",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "13r5epfkXrxZPTnRbNjNXkobeP__lvAWOnUoWC7uPKdo",
+          "mode": "list",
+          "cachedResultName": "sales_data",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/13r5epfkXrxZPTnRbNjNXkobeP__lvAWOnUoWC7uPKdo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1456440859,
+          "mode": "list",
+          "cachedResultName": "sales_data_en",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/13r5epfkXrxZPTnRbNjNXkobeP__lvAWOnUoWC7uPKdo/edit#gid=1456440859"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sku",
+              "displayName": "sku",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "product",
+              "displayName": "product",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "units_sold",
+              "displayName": "units_sold",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unit_price",
+              "displayName": "unit_price",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unit_cost",
+              "displayName": "unit_cost",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "revenue",
+              "displayName": "revenue",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "cogs",
+              "displayName": "cogs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gross_margin",
+              "displayName": "gross_margin",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gross_margin_pct",
+              "displayName": "gross_margin_pct",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        624,
+        0
+      ],
+      "id": "a711f544-2411-4a6f-b532-6bac5d16d201",
+      "name": "Load into data store",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "9xbUNqXYHVtTyrKt",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "SOURCE SIMULATOR — in production this node is replaced by a real connector (MS SQL / ERP API / file drop). Everything downstream stays identical",
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        352,
+        -224
+      ],
+      "id": "b3829ea5-aa50-424f-b5b5-4038f46a9ed7",
+      "name": "Sticky Note"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Weekly schedule": {
+      "main": [
+        [
+          {
+            "node": "Clear data store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clear data store": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Load into data store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "486fb834-6c78-499f-ab66-495b36d2f06b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8807a8b71a7406a454175eeebd26ba25a4edadba20de2354fc073e688cecfd22"
+  },
+  "nodeGroups": [],
+  "id": "dOFCVVl1ut8XiMpT",
+  "tags": []
+}

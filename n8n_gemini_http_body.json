@@ -1,0 +1,31 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "text": "You are an experienced financial controller. Based on the KPIs below, write a short morning briefing for management in English. Return a punchy headline, 2 to 4 short key points (one insight each, one sentence, no fluff), a single watch flag, and a rating. Data for {{ $json.briefing_date }}: daily revenue = {{ $json.revenue_day }} PLN, daily margin = {{ $json.margin_day_pct }}%. Last 7 days: revenue = {{ $json.revenue_7d }} PLN, margin = {{ $json.margin_7d_pct }}%. Previous 7 days: revenue = {{ $json.revenue_prev7d }} PLN, margin = {{ $json.margin_prev7d_pct }}%. Week-over-week change: revenue {{ $json.wow_revenue_pct }}%, margin {{ $json.wow_margin_pp }} percentage points. Pay special attention when revenue rises while margin falls."
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "responseMimeType": "application/json",
+    "thinkingConfig": { "thinkingBudget": 0 },
+    "responseSchema": {
+      "type": "OBJECT",
+      "properties": {
+        "headline": { "type": "STRING" },
+        "key_points": {
+          "type": "ARRAY",
+          "items": { "type": "STRING" }
+        },
+        "watch_flag": { "type": "STRING" },
+        "rating": {
+          "type": "STRING",
+          "enum": ["good", "neutral", "needs_attention"]
+        }
+      },
+      "required": ["headline", "key_points", "watch_flag", "rating"]
+    }
+  }
+}

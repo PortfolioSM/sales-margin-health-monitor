@@ -1,0 +1,246 @@
+{
+  "name": "Monitor",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        208,
+        144
+      ],
+      "id": "a9e3dad8-9623-40dd-bf38-942705483a56",
+      "name": "Manual run"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 7
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        208,
+        -80
+      ],
+      "id": "73bafb0f-96d5-4645-bbc6-34b4d2e5532d",
+      "name": "Weekly 7:00"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/13r5epfkXrxZPTnRbNjNXkobeP__lvAWOnUoWC7uPKdo/edit?gid=1456440859#gid=1456440859",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1456440859,
+          "mode": "list",
+          "cachedResultName": "sales_data_en",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/13r5epfkXrxZPTnRbNjNXkobeP__lvAWOnUoWC7uPKdo/edit#gid=1456440859"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        496,
+        16
+      ],
+      "id": "9d85e1dc-7ba8-413e-b008-87f262a9276c",
+      "name": "Read sales data",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "9xbUNqXYHVtTyrKt",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  n8n \"Code\" node  ->  compute KPIs from sales data\n//  Mode: \"Run Once for All Items\"  |  Language: JavaScript\n//\n//  Input:  1440 rows from Google Sheets (each = one day x SKU)\n//  Output: 1 JSON object with KPI summary for the briefing\n// =====================================================================\n\n// --- helper: safe number parsing (handles strings and commas) ---\nconst num = (v) => {\n  const n = parseFloat(String(v ?? \"\").replace(\",\", \".\"));\n  return isNaN(n) ? 0 : n;\n};\n\n// --- helper: ISO date shifted back by N days (\"2026-07-02\" -> ...) ---\nconst isoMinus = (dateIso, days) => {\n  const d = new Date(dateIso);\n  d.setDate(d.getDate() - days);\n  return d.toISOString().slice(0, 10);\n};\n\n// --- helper: round to 2 decimals ---\nconst r2 = (x) => Math.round(x * 100) / 100;\n\n// 1) Get all rows from the previous node\nconst rows = $input.all().map((i) => i.json);\nif (rows.length === 0) {\n  throw new Error(\"No input data - check the Google Sheets node.\");\n}\n\n// 2) Find the latest date in the data (our \"yesterday\")\nconst latestDate = rows\n  .map((r) => r.date)\n  .sort()\n  .slice(-1)[0];\n\n// 3) Build two time windows: last 7 days and previous 7 days\nconst window7 = new Set();\nconst windowPrev = new Set();\nfor (let k = 0; k < 7; k++) window7.add(isoMinus(latestDate, k));\nfor (let k = 7; k < 14; k++) windowPrev.add(isoMinus(latestDate, k));\n\n// 4) Sum revenue and cost (COGS) per window + for the latest day\nlet revDay = 0, cogsDay = 0;     // latest day\nlet rev7 = 0, cogs7 = 0;         // last 7 days\nlet revPrev = 0, cogsPrev = 0;   // previous 7 days\n\nfor (const row of rows) {\n  const rev = num(row.revenue);\n  const cogs = num(row.cogs);\n\n  if (row.date === latestDate) { revDay += rev; cogsDay += cogs; }\n  if (window7.has(row.date))        { rev7 += rev;     cogs7 += cogs; }\n  else if (windowPrev.has(row.date)) { revPrev += rev; cogsPrev += cogs; }\n}\n\n// 5) Margin % (guard against division by zero)\nconst marginPct = (rev, cogs) => (rev > 0 ? ((rev - cogs) / rev) * 100 : 0);\n\nconst marginDayPct = marginPct(revDay, cogsDay);\nconst margin7Pct = marginPct(rev7, cogs7);\nconst marginPrevPct = marginPct(revPrev, cogsPrev);\n\n// 6) Week-over-week changes\nconst wowRevenuePct = revPrev > 0 ? ((rev7 - revPrev) / revPrev) * 100 : 0;\nconst wowMarginPp = margin7Pct - marginPrevPct; // difference in percentage points\n\n// 7) Return a single object with ready KPIs\nreturn [\n  {\n    json: {\n      briefing_date: latestDate,\n      // latest day\n      revenue_day: r2(revDay),\n      margin_day_value: r2(revDay - cogsDay),\n      margin_day_pct: r2(marginDayPct),\n      // last 7 days\n      revenue_7d: r2(rev7),\n      margin_7d_pct: r2(margin7Pct),\n      // previous 7 days (comparison baseline)\n      revenue_prev7d: r2(revPrev),\n      margin_prev7d_pct: r2(marginPrevPct),\n      // week-over-week changes\n      wow_revenue_pct: r2(wowRevenuePct),\n      wow_margin_pp: r2(wowMarginPp),\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        704,
+        16
+      ],
+      "id": "a0c11294-2b3b-42c1-a870-9a0bd8f88a1b",
+      "name": "Compute KPIs (WoW)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": \"You are an experienced financial controller. Based on the KPIs below, write a short morning briefing for management in English. Return a punchy headline, 2 to 4 short key points (one insight each, one sentence, no fluff), a single watch flag, and a rating. Data for {{ $json.briefing_date }}: daily revenue = {{ $json.revenue_day }} PLN, daily margin = {{ $json.margin_day_pct }}%. Last 7 days: revenue = {{ $json.revenue_7d }} PLN, margin = {{ $json.margin_7d_pct }}%. Previous 7 days: revenue = {{ $json.revenue_prev7d }} PLN, margin = {{ $json.margin_prev7d_pct }}%. Week-over-week change: revenue {{ $json.wow_revenue_pct }}%, margin {{ $json.wow_margin_pp }} percentage points. Pay special attention when revenue rises while margin falls.\"\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"responseMimeType\": \"application/json\",\n    \"thinkingConfig\": { \"thinkingBudget\": 0 },\n    \"responseSchema\": {\n      \"type\": \"OBJECT\",\n      \"properties\": {\n        \"headline\": { \"type\": \"STRING\" },\n        \"key_points\": {\n          \"type\": \"ARRAY\",\n          \"items\": { \"type\": \"STRING\" }\n        },\n        \"watch_flag\": { \"type\": \"STRING\" },\n        \"rating\": {\n          \"type\": \"STRING\",\n          \"enum\": [\"good\", \"neutral\", \"needs_attention\"]\n        }\n      },\n      \"required\": [\"headline\", \"key_points\", \"watch_flag\", \"rating\"]\n    }\n  }\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        912,
+        16
+      ],
+      "id": "d4abd564-49fb-4548-9810-044173d23122",
+      "name": "AI commentary",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "Xo9nGKkLtcIz14aJ",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n//  n8n \"Code\" node (second)  ->  parse Gemini response + build email\n//  Mode: \"Run Once for All Items\"  |  Language: JavaScript\n//\n//  Input:  response from the HTTP Request node (Gemini)\n//  Output: 1 object with subject + html ready to email\n// =====================================================================\n\nconst item = $input.first().json;\n\n// 1) Extract the response text from Gemini's nested structure\nlet text;\ntry {\n  text = item.candidates[0].content.parts[0].text;\n} catch (e) {\n  throw new Error(\"Gemini response not found in the expected structure (candidates[0].content.parts[0].text).\");\n}\n\n// 2) Turn the text (JSON as string) into an object\nlet ai;\ntry {\n  ai = JSON.parse(text);\n} catch (e) {\n  throw new Error(\"Gemini response is not valid JSON. Start: \" + String(text).slice(0, 200));\n}\n\n// 3) Rating -> color + emoji + label\nconst styleByRating = {\n  good:            { emoji: \"🟢\", color: \"#1a7f37\", label: \"Good\" },\n  neutral:         { emoji: \"🟡\", color: \"#9a6700\", label: \"Neutral\" },\n  needs_attention: { emoji: \"🔴\", color: \"#cf222e\", label: \"Needs attention\" },\n};\nconst rs = styleByRating[ai.rating] || { emoji: \"⚪\", color: \"#57606a\", label: ai.rating };\n\n// 4) Build the key-points list as dash bullets (each insight on its own line)\n//    Plain <div> lines with a leading \"–\" are more email-client-safe than <ul>.\nconst points = Array.isArray(ai.key_points) ? ai.key_points : [];\nconst listHtml = points\n  .map((p) => `<div style=\"margin-bottom:8px;line-height:1.5\">&ndash;&nbsp;${p}</div>`)\n  .join(\"\");\n\n// 5) Subject line\nconst subject = rs.emoji + \" \" + ai.headline;\n\n// 6) Clean, structured HTML email\nconst html = `\n  <div style=\"font-family:Arial,Helvetica,sans-serif;max-width:600px;color:#1f2328\">\n    <h2 style=\"margin:0 0 4px\">${ai.headline}</h2>\n    <p style=\"margin:0 0 16px\">\n      <span style=\"display:inline-block;padding:2px 10px;border-radius:12px;\n      background:${rs.color};color:#fff;font-size:12px;font-weight:bold\">\n      ${rs.emoji} ${rs.label}</span>\n    </p>\n\n    <div style=\"margin:0 0 16px\">${listHtml}</div>\n\n    <div style=\"border-left:4px solid #d4a72c;background:#fff8e1;padding:10px 14px;margin:0 0 16px\">\n      <strong>⚠️ Watch:</strong> ${ai.watch_flag}\n    </div>\n\n    <hr style=\"border:none;border-top:1px solid #d0d7de;margin:16px 0\">\n    <p style=\"color:#8c959f;font-size:12px;margin:0\">\n      Automated briefing • Sales &amp; Margin Health Monitor\n    </p>\n  </div>\n`;\n\n// 7) Return ready fields (subject/html) + raw AI fields just in case\nreturn [{ json: { subject, html, ...ai } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        16
+      ],
+      "id": "5f16b1ff-44f7-42fa-bd25-61ac6eb6e2af",
+      "name": "Build email"
+    },
+    {
+      "parameters": {
+        "sendTo": "portfoliotest95@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.html }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1328,
+        16
+      ],
+      "id": "b3ad1901-cb84-42a0-b455-895475a17249",
+      "name": "Send briefing",
+      "webhookId": "26d96d01-78ad-49c8-b34d-07bac5813381",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "F1XvokpeiJQl1gdG",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "1. Ingest -> 2. Analyze -> 3. AI commentary -> 4. Deliver",
+        "height": 80,
+        "width": 496,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        560,
+        -224
+      ],
+      "id": "c43ea78a-c529-485e-9d82-69b8537171aa",
+      "name": "Sticky Note"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual run": {
+      "main": [
+        [
+          {
+            "node": "Read sales data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weekly 7:00": {
+      "main": [
+        [
+          {
+            "node": "Read sales data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read sales data": {
+      "main": [
+        [
+          {
+            "node": "Compute KPIs (WoW)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute KPIs (WoW)": {
+      "main": [
+        [
+          {
+            "node": "AI commentary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI commentary": {
+      "main": [
+        [
+          {
+            "node": "Build email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build email": {
+      "main": [
+        [
+          {
+            "node": "Send briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "0dc71de3-f5ef-4309-bc84-cd36268d97d4",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8807a8b71a7406a454175eeebd26ba25a4edadba20de2354fc073e688cecfd22"
+  },
+  "nodeGroups": [],
+  "id": "XKpYDiRw1cZt3p93",
+  "tags": []
+}
